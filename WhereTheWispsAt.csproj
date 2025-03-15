@@ -18,12 +18,12 @@
   </ItemGroup>
 
   <ItemGroup>
-    <Reference Include="ExileCore">
-      <HintPath>..\PoEHelper-3.20.0-2\ExileCore.dll</HintPath>
+    <Reference Include="ExileCore2">
+      <HintPath>..\..\..\Desktop\Fg2\ExileCore2.dll</HintPath>
       <Private>False</Private>
     </Reference>
-    <Reference Include="GameOffsets">
-      <HintPath>..\PoEHelper-3.20.0-2\GameOffsets.dll</HintPath>
+    <Reference Include="GameOffsets2">
+      <HintPath>..\..\..\Desktop\Fg2\GameOffsets2.dll</HintPath>
       <Private>False</Private>
     </Reference>
   </ItemGroup>

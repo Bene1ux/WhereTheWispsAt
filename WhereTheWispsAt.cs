@@ -1,14 +1,19 @@
-﻿using ExileCore;
-using ExileCore.PoEMemory;
-using ExileCore.PoEMemory.Components;
-using ExileCore.PoEMemory.MemoryObjects;
-using ExileCore.Shared.Helpers;
-using SharpDX;
+﻿using ExileCore2;
+using ExileCore2.PoEMemory;
+using ExileCore2.PoEMemory.Components;
+using ExileCore2.PoEMemory.MemoryObjects;
+using ExileCore2.Shared.Helpers;
 using System.Collections.Generic;
+using System.Diagnostics;
+using System.Drawing;
 using System.Linq;
+using System.Reflection;
+using System.Runtime.InteropServices;
 using Vector3N = System.Numerics.Vector3;
 using Vector2N = System.Numerics.Vector2;
-using ExileCore.PoEMemory.Elements;
+using ExileCore2.PoEMemory.Elements;
+using ExileCore2.Shared.Enums;
+using GameOffsets2;
 
 namespace WhereTheWispsAt;
 
@@ -17,70 +22,97 @@ public class WhereTheWispsAt : BaseSettingsPlugin<WhereTheWispsAtSettings>
     public enum WispType
     {
         None,
-        Yellow,
-        Purple,
-        Blue,
-        Chests,
-        LightBomb,
-        Wells,
-        FuelRefill,
-        Altars,
-        DustConverters,
-        Dealer,
-        Encounter,
+        Rituals,
         Shrine,
-        Iron
+        Breach,
+        Custom
     }
 
-    public List<string> GoodShrines = new List<string>() { "Acceleration Shrine", "Diamond Shrine",
-    "Divine Shrine","Echoing Shrine", "Covetous Shrine"/*, "Impenetrable Shrine"*/};
+    public Dictionary<Vector2N, Stopwatch> transitionedBreaches = new();
 
-    public WispData Wisps = new([], [], [], [], [], [], [], [], [], [], [], [], []);
+    public List<string> GoodShrines = new List<string>()
+    {
+        "Gloom Shrine", "Acceleration Shrine", "Diamond Shrine",
+        "Divine Shrine", "Echoing Shrine", "Covetous Shrine" /*, "Impenetrable Shrine"*/
+    };
+
+    public List<string> BadShrines = new List<string>()
+    {
+        "Corrupting Shrine", "Greed Shrine" /*, "Impenetrable Shrine"*/
+    };
+
+    public WispData Wisps = new([], [], [], []);
 
     public WhereTheWispsAt()
     {
         Name = "Where The Wisps At";
     }
 
-    public override bool Initialise() => true;
-
-    public override Job Tick()
+    public override bool Initialise()
     {
-        var wellsToRemove = Wisps.Wells.Where(
-                                     well => well.TryGetComponent<StateMachine>(out var stateComp) &&
-                                             stateComp?.States.Any(x => x.Name == "activated" && x.Value == 1) == true
-                                 )
-                                 .ToList();
+        Settings.PressMe.OnPressed += () =>
+        {
+            var t = typeof(PathfindingComponentOffsets);
+            foreach (var field in t.GetFields(BindingFlags.Public | BindingFlags.Instance))
+            {
+                var offset = Marshal.OffsetOf(t, field.Name);
+                DebugWindow.LogMsg($"{field.Name} offset: {offset:X}");
+            }
+        };
+        return true;
+    }
 
-        wellsToRemove.ForEach(well => RemoveEntityFromList(well, Wisps.Wells));
+    private float breachDuration => 6000.0f / (100 + breachFasterModifier);
 
-        var altarsToRemove = Wisps.Altars.Where(
-                                      altar => altar.TryGetComponent<StateMachine>(out var stateComp) &&
-                                               stateComp?.States.Any(x => x.Name == "activated" && x.Value == 1) == true
-                                  )
-                                  .ToList();
+    private float breachFasterModifier =>
+        GameController.IngameState.Data.MapStats.ContainsKey(GameStat.MapBreachTimePassedPct)
+            ? GameController.IngameState.Data.MapStats[GameStat.MapBreachTimePassedPct]
+            : 0;
 
-        altarsToRemove.ForEach(altar => RemoveEntityFromList(altar, Wisps.Altars));
+    private int totalBreachCount = 0;
+    private int transitionedBreachCount = 0;
 
-        var dustConvertersToRemove = Wisps.DustConverters.Where(
-                                              converter => converter.TryGetComponent<StateMachine>(out var stateComp) &&
-                                                           stateComp?.States.Any(
-                                                               x => x.Name == "activated" && x.Value == 1
-                                                           ) == true
-                                          )
-                                          .ToList();
+    public override void Tick()
+    {
+        Wisps.Shrines.RemoveAll(s => !s.IsTargetable);
+        var breachesToRemove = new List<uint>();
 
-        dustConvertersToRemove.ForEach(altar => RemoveEntityFromList(altar, Wisps.DustConverters));
+        foreach (var breach in Wisps.Breaches.Where(b =>
+                     b.IsTransitioned && !transitionedBreaches.ContainsKey(b.GridPos)))
+        {
+            transitionedBreachCount++;
+            transitionedBreaches[breach.GridPos] = Stopwatch.StartNew();
+            breachesToRemove.Add(breach.Id);
+        }
 
-        foreach (var chest in Wisps.Chests.Where(x => x.GetComponent<Chest>()?.IsOpened != false).ToList())
-            RemoveEntityFromList(chest, Wisps.Chests);
 
-        return null;
+        Wisps.Breaches.RemoveAll(b => breachesToRemove.Contains(b.Id) /*||b.DistancePlayer<120&&!b.IsValid*/);
+        var expiredBreaches = transitionedBreaches
+            .Where(pair => pair.Value.Elapsed.TotalSeconds >= breachDuration)
+            .Select(pair => pair.Key)
+            .ToList();
+
+        foreach (var breach in expiredBreaches)
+        {
+            transitionedBreaches.Remove(breach);
+        }
+
+        //var count = Wisps.Breaches.RemoveAll(s => s.IsTransitioned);
+        Wisps.Altars.RemoveAll(s => s.TryGetComponent(out StateMachine m) && m.States[0].Value >= 2);
+
+        /*var altarsToRemove = Wisps.Altars.Where(
+                altar => altar.TryGetComponent<StateMachine>(out var stateComp) &&
+                         stateComp?.States.Any(x => x.Name == "activated" && x.Value == 1) == true
+            )
+            .ToList();
+
+        altarsToRemove.ForEach(altar => RemoveEntityFromList(altar, Wisps.Altars));*/
     }
 
     public override void EntityAdded(Entity entity)
     {
-        var path = entity.TryGetComponent<Animated>(out var animatedComp) ? animatedComp?.BaseAnimatedObjectEntity?.Path
+        var path = entity.TryGetComponent<Animated>(out var animatedComp)
+            ? animatedComp?.BaseAnimatedObjectEntity?.Path
             : null;
 
         //if (entity.Metadata.Contains("Volatile"))
@@ -101,100 +133,59 @@ public class WhereTheWispsAt : BaseSettingsPlugin<WhereTheWispsAtSettings>
 
         switch (metadata)
         {
-            case not null when metadata.StartsWith("Metadata/MiscellaneousObjects/Azmeri/AzmeriResource"):
-                if (path != null)
-                {
-                    if (path.Contains("_primal"))
-                    {
-                        Wisps.Blue.Add(entity);
-                    }
-                    else if (path.Contains("_warden"))
-                    {
-                        Wisps.Yellow.Add(entity);
-                    }
-                    else if (path.Contains("_vodoo"))
-                    {
-                        Wisps.Purple.Add(entity);
-                    }
-                }
-
-                break;
-            case "Metadata/MiscellaneousObjects/Azmeri/AzmeriLightBomb":
-                Wisps.LightBomb.Add(entity);
-                break;
-            case "Metadata/MiscellaneousObjects/Azmeri/AzmeriFuelResupply":
-                Wisps.FuelRefill.Add(entity);
-                break;
-            case "Metadata/Terrain/Leagues/Lake/Objects/CraftingObjectRandom":
-            case "Metadata/MiscellaneousObjects/Azmeri/AzmeriFlaskRefill":
-                Wisps.Wells.Add(entity);
-                break;
-            case "Metadata/NPC/League/Affliction/GlyphsHarvestTree":
-                Wisps.Encounters[entity] = "Harvest";
-                break;
-            case "Metadata/MiscellaneousObjects/Azmeri/AzmeriBuffEffigySmall":
-            case "Metadata/MiscellaneousObjects/Azmeri/AzmeriBuffEffigyMedium":
-            case "Metadata/MiscellaneousObjects/Azmeri/AzmeriBuffEffigyLarge":
-                Wisps.Encounters[entity] = "Buff";
-                break;
-            case "Metadata/Monsters/LeagueAzmeri/VoodooKingBoss/VoodooKingBoss":
-            case "Metadata/Monsters/LeagueAzmeri/VoodooKingBoss/VoodooKingBoss2":
-            case "Metadata/Monsters/LeagueAzmeri/VoodooKingBoss/VoodooKingBoss3":
-            case "Metadata/NPC/Ghostrider":
-            case "Metadata/NPC/League/Affliction/GlyphsEtching01":
-            case "Metadata/NPC/League/Affliction/GlyphsEtching02":
-            case "Metadata/NPC/League/Affliction/GlyphsEtching03":
-            case "Metadata/NPC/League/Affliction/GlyphsEtching04":
-            case "Metadata/NPC/League/Affliction/GlyphsEtching05":
-            case "Metadata/NPC/League/Affliction/GlyphsGoddessStatue":
-            case "Metadata/NPC/League/Affliction/GlyphsGruthkulShrine":
-            case "Metadata/NPC/League/Affliction/GlyphsKingGlyphOne":
-            case "Metadata/NPC/League/Affliction/GlyphsKingGlyphTwo":
-            case "Metadata/NPC/League/Affliction/GlyphsMajiProclamation01":
-            case "Metadata/NPC/League/Affliction/GlyphsMajiProclamation02":
-            case "Metadata/NPC/League/Affliction/GlyphsSingleStatue":
-            case "Metadata/NPC/League/Affliction/GlyphsWarringSisters":
-                Wisps.Encounters[entity] = metadata[(metadata.LastIndexOf('/') + 1)..];
-                break;
-            case "Metadata/Chests/LeagueAzmeri/OmenChest":
-                Wisps.Encounters[entity] = "Omen Chest";
-                break;
-            //case not null when metadata.Contains("Azmeri/SacrificeAltarObjects"):
-            case "Metadata/MiscellaneousObjects/Azmeri/SacrificeAltarObjects/AzmeriSacrificeAltarBear":
-            case "Metadata/MiscellaneousObjects/Azmeri/SacrificeAltarObjects/AzmeriSacrificeAltarRabbit":
-            case "Metadata/MiscellaneousObjects/Azmeri/SacrificeAltarObjects/AzmeriSacrificeAltarDeer":
+            case "Metadata/Terrain/Leagues/Ritual/RitualRuneInteractable":
                 Wisps.Altars.Add(entity);
                 break;
-            case not null when metadata.Contains("Azmeri/AzmeriDustConverter"):
-                Wisps.DustConverters.Add(entity);
-                break;
-            case not null when metadata.Contains("Azmeri/UniqueDealer"):
-                Wisps.Dealer.Add(entity);
-                break;
-            case not null when metadata.StartsWith("Metadata/Chests/LeagueAzmeri/"):
-                Wisps.Chests.Add(entity);
-                break;
+            //case not null when metadata.Contains("Azmeri/AzmeriDustConverter"):
+            //   Wisps.DustConverters.Add(entity);
+            //  break;
             case "Metadata/Shrines/Shrine":
-                if (GoodShrines.Contains(entity.RenderName))
-                {
-                    Wisps.Shrines.Add(entity);
-                }
+                //if (GoodShrines.Contains(entity.RenderName)||BadShrines.Contains(entity.RenderName))
+            {
+                Wisps.Shrines.Add(entity);
+            }
+
                 break;
-            case "Metadata/Terrain/Leagues/Settlers/Node/Objects/NodeTypes/CrimsonIron":
-                Wisps.Irons.Add(entity);
+            case "Metadata/MiscellaneousObjects/Breach/BreachObject":
+                Wisps.Breaches.Add(entity);
+                DebugWindow.LogMsg($"Breach id: {entity.Id} ({entity.GridPos})");
+                totalBreachCount++;
                 break;
+        }
+
+        //Spectral Leader t17
+        //"Metadata/Monsters/WarHero/WarHeroCasterAtlasUber"
+
+        //Heretical Guardian ruined/ravaged/torched/desecr
+        //Metadata/Monsters/ReligiousTemplar/ReligiousTemplarTwoHandedKitavaHellscape_
+        //Metadata/Monsters/ReligiousTemplar/ReligiousTemplarTwoHandedKitava
+
+        //Pale seraphim
+        //Metadata/Monsters/LeagueHellscape/PaleFaction/HellscapePaleElite2
+        //Metadata/Monsters/LeagueHellscape/PaleFaction/HellscapePaleElite2Standalone_
+        //Metadata/Monsters/LeagueHellscape/PaleFaction/HellscapePaleElite2Standalone_
+        //	Metadata/Monsters/LeagueHellscape/PaleFaction/HellscapePaleElite2Spectre
+        //Metadata/Monsters/LeagueKalguur/PaleFaction/DemonCopperPaleElite2
+
+        if (!string.IsNullOrEmpty(Settings.CustomMetadata?.Value))
+        {
+            var split = Settings.CustomMetadata.Value.Split(',');
+            if (split.Contains(metadata))
+            {
+                Wisps.Custom.Add(entity);
+            }
         }
     }
 
     public override void EntityRemoved(Entity entity)
     {
-        new[]
+        /*new[]
             {
-                Wisps.Blue, Wisps.Purple, Wisps.Yellow, Wisps.LightBomb, Wisps.Wells, Wisps.FuelRefill
+                Wisps.Altars, Wisps.Breaches, Wisps.Shrines, Wisps.Custom
             }.ToList()
-             .ForEach(list => RemoveEntityFromList(entity, list));
+            .ForEach(list => RemoveEntityFromList(entity, list));
 
-        Wisps.Encounters.Remove(entity);
+        Wisps.Encounters.Remove(entity);*/
     }
 
     private static void RemoveEntityFromList(Entity entity, List<Entity> list)
@@ -207,8 +198,13 @@ public class WhereTheWispsAt : BaseSettingsPlugin<WhereTheWispsAtSettings>
         }
     }
 
-    public override void AreaChange(AreaInstance area) =>
-        Wisps = new WispData([], [], [], [], [], [], [], [], [], [], [], [], []);
+    public override void AreaChange(AreaInstance area)
+    {
+        Wisps = new WispData([], [], [], []);
+        transitionedBreaches.Clear();
+        totalBreachCount = 0;
+        transitionedBreachCount = 0;
+    }
 
     public override void Render()
     {
@@ -218,6 +214,39 @@ public class WhereTheWispsAt : BaseSettingsPlugin<WhereTheWispsAtSettings>
         }
 
         var inGameUi = GameController.Game.IngameState.IngameUi;
+        var offsetY = 0;
+        Graphics.DrawText($"Breaches: {transitionedBreachCount}/{totalBreachCount}",
+            new Vector2N(Settings.BreachX.Value, Settings.BreachY.Value));
+        offsetY += 20;
+        foreach (var breach in transitionedBreaches)
+        {
+            //Graphics.DrawCircleOnLargeMap(breach.Key, true, Settings.BreachRadius.Value, Color.Purple,5,30);
+            //var z = GameController.IngameState.Data.RawTerrainHeightData[(int)breach.Key.Y][(int)breach.Key.X];
+            var z = 0;
+            Graphics.DrawCircleInWorld(breach.Key.GridToWorld(z), Settings.BreachRadius.Value / 0.092f, Color.HotPink,
+                15, 30);
+
+
+            var time = (float)breach.Value.Elapsed.TotalSeconds;
+            var k = Settings.BreachK.Value / 1000f;
+            var tfast = Settings.BreachTfast.Value / 1000f;
+            var maxradius = Settings.BreachRadius.Value;
+            var rfast = tfast * maxradius / breachDuration *
+                        k;
+            var isShortBreach = time <= tfast;
+
+            var radius = isShortBreach
+                ? time * k * maxradius / breachDuration
+                : rfast + (maxradius - rfast) * (time - tfast) / (breachDuration - tfast);
+            if (Settings.DrawBreachExpand.Value)
+            {
+                Graphics.DrawCircleInWorld(breach.Key.GridToWorld(z), radius / 0.092f, Color.White, 10, 30);
+            }
+
+            Graphics.DrawText($"{breachDuration - breach.Value.Elapsed.TotalSeconds}",
+                new Vector2N(Settings.BreachX.Value, Settings.BreachY.Value + offsetY));
+            offsetY += 20;
+        }
 
         if (!Settings.IgnoreFullscreenPanels && inGameUi.FullscreenPanels.Any(x => x.IsVisible))
         {
@@ -231,61 +260,28 @@ public class WhereTheWispsAt : BaseSettingsPlugin<WhereTheWispsAtSettings>
 
         foreach (var (list, color, size, text, type) in new[]
                  {
-                     (Wisps.Yellow, Settings.YellowWisp, Settings.YellowSize.Value, null, WispType.Yellow),
-                     (Wisps.Purple, Settings.PurpleWisp, Settings.PurpleSize.Value, null, WispType.Purple),
-                     (Wisps.Blue, Settings.BlueWisp, Settings.BlueSize.Value, null, WispType.Blue),
-                     (Wisps.Chests, Settings.ChestColor, Settings.ChestSize.Value, null, WispType.Chests),
-                     (Wisps.LightBomb, Settings.LightBomb, 0, "Light Bomb", WispType.LightBomb),
-                     (Wisps.Wells, Settings.Wells, 0, "Well", WispType.Wells),
-                     (Wisps.FuelRefill, Settings.FuelRefill, 0, "Fuel Refill", WispType.FuelRefill),
-                     (Wisps.Altars, Settings.Altars, 0, "Altar", WispType.Altars),
-                     (Wisps.DustConverters, Settings.DustConverters, 0, "Dust Converter", WispType.DustConverters),
-                     (Wisps.Dealer, Settings.Dealer, 0, "! TRADER !", WispType.Dealer),
-                     (Wisps.Shrines.Where(s=>!s.RenderName.Contains("Covetous")&&s.IsTargetable).ToList(), Settings.BlueWisp, 0, "Shrine", WispType.Shrine),
-                     (Wisps.Shrines.Where(s=>s.RenderName.Contains("Covetous")&&s.IsTargetable).ToList(), Settings.Dealer, 0, $"COVETOUS", WispType.Shrine),
-                      (Wisps.Irons, Settings.Altars, 0, "CRIMSON", WispType.Iron),
+                     (Wisps.Altars, Settings.Rituals.Value, 0, "Ritual", WispType.Rituals),
+                     (Wisps.Shrines.Where(s => GoodShrines.Contains(s.RenderName)).ToList(), Settings.BlueWisp.Value, 0,
+                         string.Empty, WispType.Shrine),
+                     (Wisps.Shrines.Where(s => BadShrines.Contains(s.RenderName)).ToList(), Color.Red, 0,
+                         string.Empty, WispType.Shrine),
+                     (Wisps.Shrines.Where(s => !GoodShrines.Contains(s.RenderName) && !BadShrines.Contains(s.RenderName)).ToList(),
+                         Color.Gray, 0,
+                         string.Empty, WispType.Shrine),
+                     (Wisps.Breaches, Settings.Breach.Value, 0, "Breach", WispType.Breach),
+                     (Wisps.Custom, Settings.Dealer.Value, 0, "Spectre", WispType.Custom),
                  })
             DrawWisps(list, color, size, text, type);
 
-        foreach (var (entity, text) in Wisps.Encounters)
-            DrawWisps([entity], Settings.EncounterColor, 0, text, WispType.Encounter);
-
-        foreach (var chest in Wisps.Chests)
-            if (chest.DistancePlayer < Settings.ChestScreenDisplayMaxDistance &&
-                chest.TryGetComponent<Render>(out var render))
-            {
-                Graphics.DrawBoundingBoxInWorld(
-                    chest.PosNum,
-                    Settings.ChestColor.Value with
-                    {
-                        A = (byte)Settings.ChestAlpha
-                    },
-                    render.BoundsNum,
-                    render.RotationNum.X
-                );
-            }
-        if (Settings.DrawRemainingFuel)
-        {
-            if (!GameController.IngameState.Data.IsInsideAzmeriZone)
-            {
-                return;
-            }
-            var fuelLeft = inGameUi.LeagueMechanicButtons.AzmeriElement.Data.RemainingFuelFraction;
-            var fuelLeftText = $"{fuelLeft:P0}";
-            var textPlacement = new Vector2(Settings.PositionX, Settings.PositionY);
-            using (Graphics.SetTextScale(Settings.TextSize))
-            {
-                Graphics.DrawText(fuelLeftText, textPlacement, Settings.FuelColor);
-            }
-        }
         return;
 
 
         void DrawWisps(List<Entity> entityList, Color color, int size, string text, WispType type = WispType.None)
         {
             // Just run this once, land looks flat.
-            var groundZ = entityList.FirstOrDefault()?.GridPosNum is { } gridPosNum
-                ? GameController.IngameState.Data.GetTerrainHeightAt(gridPosNum) : 0;
+            var groundZ = entityList.FirstOrDefault()?.GridPos is { } gridPosNum
+                ? GameController.IngameState.Data.GetTerrainHeightAt(gridPosNum)
+                : 0;
 
             entityList = entityList.OrderBy(x => x.Id).ToList();
 
@@ -293,67 +289,40 @@ public class WhereTheWispsAt : BaseSettingsPlugin<WhereTheWispsAtSettings>
             {
                 X = 0,
                 Y = 0,
-                Width = GameController.Window.GetWindowRectangleTimeCache.Size.Width,
-                Height = GameController.Window.GetWindowRectangleTimeCache.Size.Height
+                Width = GameController.Window.GetWindowRectangleTimeCache.Size.X,
+                Height = GameController.Window.GetWindowRectangleTimeCache.Size.Y
             };
 
             for (var i = 0; i < entityList.Count; i++)
             {
-
-                var specificWispTypes = new[]
-                {
-                    WispType.Yellow, WispType.Purple, WispType.Blue, WispType.LightBomb, WispType.FuelRefill
-                };
-
-                var actualWispTypes = new[] { WispType.Yellow, WispType.Purple, WispType.Blue,
-                };
-
-
                 var entityCur = entityList[i];
 
                 if (entityCur.IsTransitioned)
                 {
                     continue;
                 }
-                var actualSize = size;
-                WispSize wispSize = new WispSize() { Size=0};
-                if (actualWispTypes.Contains(type))
+
+                if (type.Equals(WispType.Custom))
                 {
-                    var newSize = entityCur.GetHudComponent<WispSize>();
-                    if (newSize != null)
-                    {
-                        wispSize.Size = newSize.Size;
-                    }
-                    else
-                    {
-                        var c = entityCur.GetComponent<Animated>()?.BaseAnimatedObjectEntity?.Metadata;
-                       
-                        if (c?.Contains("sml") ?? false)
-                        {
-                            wispSize.Size = 0;
-                        }
-                        else if (c?.Contains("med") ?? false)
-                        {
-                            wispSize.Size = 2;
-                        }
-                        else if (c?.Contains("big") ?? false)
-                        {
-                            wispSize.Size = 4;
-                        }
-                        entityCur.SetHudComponent(wispSize);
-                    }
-                    actualSize += wispSize.Size;
+                    text = entityCur.Metadata[(entityCur.Metadata.LastIndexOf('/') + 1)..];
                 }
+
+                var actualSize = size;
 
                 if (Settings.DrawMap && GameController.IngameState.IngameUi.Map.LargeMap.IsVisibleLocal)
                 {
                     var mapPos = GameController.IngameState.Data.GetGridMapScreenPosition(
-                        entityCur.PosNum.WorldToGrid()
+                        entityCur.Pos.WorldToGrid()
                     );
 
                     if (text != null)
                     {
                         const int widthPadding = 3;
+                        if (string.IsNullOrEmpty(text))
+                        {
+                            text = entityCur.RenderName;
+                        }
+
                         var boxOffset = Graphics.MeasureText(text) / 2f;
                         var textOffset = boxOffset;
                         boxOffset.X += widthPadding;
@@ -362,42 +331,17 @@ public class WhereTheWispsAt : BaseSettingsPlugin<WhereTheWispsAtSettings>
                     }
                     else
                     {
-                        if (Settings.DrawMapLines && i < entityList.Count - 1 && type != WispType.Chests)
-                        {
-                            if (i < entityList.Count - 1 && specificWispTypes.Contains(type))
-                            {
-                                var entityNext = entityList[i + 1];
-
-                                var mapPosTo
-                                    = GameController.IngameState.Data.GetGridMapScreenPosition(
-                                        entityNext.PosNum.WorldToGrid()
-                                    );
-
-                                if (entityNext.Id == entityCur.Id + 1 && entityCur.Distance(entityNext) < 30 &&
-                                    IsEntityWithinScreen(mapPos, screenSize, 0) &&
-                                    IsEntityWithinScreen(mapPosTo, screenSize, 0))
-                                {
-                                    Graphics.DrawLine(mapPos, mapPosTo, Settings.MapLineSize, color);
-                                }
-                            }
-                        }
-
                         Graphics.DrawCircleFilled(mapPos, actualSize, color, 8);
-                        //.DrawBox(
-                        //    new RectangleF(mapPos.X - actualSize / 2, mapPos.Y - actualSize / 2, actualSize, actualSize),
-                        //    color,
-                        //    1f
-                        //);
                     }
                 }
 
-                if (!Settings.DrawWispsOnGround || !specificWispTypes.Contains(type))
+                /*if (!Settings.DrawWispsOnGround)
                 {
                     continue;
                 }
 
-                var entityPos = entityCur.PosNum;
-                var entityPosScreen = RemoteMemoryObject.pTheGame.IngameState.Camera.WorldToScreen(entityPos);
+                var entityPos = entityCur.Pos;
+                var entityPosScreen = RemoteMemoryObject.TheGame.IngameState.Camera.WorldToScreen(entityPos);
 
                 if (IsEntityWithinScreen(entityPosScreen, screenSize, 50))
                 {
@@ -408,7 +352,7 @@ public class WhereTheWispsAt : BaseSettingsPlugin<WhereTheWispsAtSettings>
                         },
                         color with
                         {
-                            A = (byte)Settings.WispsOnGroundAlpha
+                            //A = (byte)Settings.WispsOnGroundAlpha
                         },
                         new Vector3N(
                             Settings.WispsOnGroundWidth,
@@ -417,7 +361,7 @@ public class WhereTheWispsAt : BaseSettingsPlugin<WhereTheWispsAtSettings>
                         ),
                         0f
                     );
-                }
+                }*/
             }
         }
     }
@@ -435,17 +379,8 @@ public class WhereTheWispsAt : BaseSettingsPlugin<WhereTheWispsAtSettings>
     }
 
     public record WispData(
-        List<Entity> Purple,
-        List<Entity> Yellow,
-        List<Entity> Blue,
-        List<Entity> LightBomb,
-        List<Entity> Wells,
-        List<Entity> FuelRefill,
         List<Entity> Altars,
-        List<Entity> DustConverters,
-        List<Entity> Dealer,
-        List<Entity> Chests,
-        Dictionary<Entity, string> Encounters,
         List<Entity> Shrines,
-        List<Entity> Irons);
+        List<Entity> Breaches,
+        List<Entity> Custom);
 }
