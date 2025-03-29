@@ -13,6 +13,7 @@ public class WhereTheWispsAtSettings : ISettings
     public ColorNode Rituals { get; set; } = new ColorNode(System.Drawing.Color.Red);
     public ColorNode Dealer { get; set; } = new ColorNode(System.Drawing.Color.HotPink);
     public ColorNode Breach { get; set; } = new ColorNode(System.Drawing.Color.HotPink);
+    public TextNode GoodShrines { get; set; } = new TextNode("Gloom Shrine,Acceleration Shrine,Diamond Shrine,Divine Shrine,Echoing Shrine,Covetous Shrine");
     public ToggleNode IgnoreFullscreenPanels { get; set; } = new ToggleNode(false);
     public ToggleNode IgnoreLargePanels { get; set; } = new ToggleNode(false);
     public TextNode CustomMetadata { get; set; } = new TextNode();

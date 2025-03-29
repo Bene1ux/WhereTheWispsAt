@@ -30,16 +30,16 @@ public class WhereTheWispsAt : BaseSettingsPlugin<WhereTheWispsAtSettings>
 
     public Dictionary<Vector2N, Stopwatch> transitionedBreaches = new();
 
-    public List<string> GoodShrines = new List<string>()
+    /*public List<string> GoodShrines = new List<string>()
     {
-        "Gloom Shrine", "Acceleration Shrine", "Diamond Shrine",
-        "Divine Shrine", "Echoing Shrine", "Covetous Shrine" /*, "Impenetrable Shrine"*/
-    };
+        "Tempest Shrine","Gloom Shrine", "Acceleration Shrine", "Diamond Shrine",
+        "Divine Shrine", "Echoing Shrine", "Covetous Shrine" /*, "Impenetrable Shrine"#1#
+    };*/
 
-    public List<string> BadShrines = new List<string>()
+    /*public List<string> BadShrines = new List<string>()
     {
-        "Corrupting Shrine", "Greed Shrine" /*, "Impenetrable Shrine"*/
-    };
+        "Corrupting Shrine", "Greed Shrine" /*, "Impenetrable Shrine"#1#
+    };*/
 
     public WispData Wisps = new([], [], [], []);
 
@@ -74,7 +74,7 @@ public class WhereTheWispsAt : BaseSettingsPlugin<WhereTheWispsAtSettings>
 
     public override void Tick()
     {
-        Wisps.Shrines.RemoveAll(s => !s.IsTargetable);
+        Wisps.Shrines.RemoveAll(s => s.IsValid&&!s.IsTargetable);
         var breachesToRemove = new List<uint>();
 
         foreach (var breach in Wisps.Breaches.Where(b =>
@@ -140,8 +140,9 @@ public class WhereTheWispsAt : BaseSettingsPlugin<WhereTheWispsAtSettings>
             //   Wisps.DustConverters.Add(entity);
             //  break;
             case "Metadata/Shrines/Shrine":
-                //if (GoodShrines.Contains(entity.RenderName)||BadShrines.Contains(entity.RenderName))
+                if (Settings.GoodShrines.Value.Split(',').Contains(entity.RenderName))
             {
+                entity.SetHudComponent(entity.RenderName);
                 Wisps.Shrines.Add(entity);
             }
 
@@ -179,13 +180,11 @@ public class WhereTheWispsAt : BaseSettingsPlugin<WhereTheWispsAtSettings>
 
     public override void EntityRemoved(Entity entity)
     {
-        /*new[]
+        new[]
             {
                 Wisps.Altars, Wisps.Breaches, Wisps.Shrines, Wisps.Custom
             }.ToList()
             .ForEach(list => RemoveEntityFromList(entity, list));
-
-        Wisps.Encounters.Remove(entity);*/
     }
 
     private static void RemoveEntityFromList(Entity entity, List<Entity> list)
@@ -261,12 +260,7 @@ public class WhereTheWispsAt : BaseSettingsPlugin<WhereTheWispsAtSettings>
         foreach (var (list, color, size, text, type) in new[]
                  {
                      (Wisps.Altars, Settings.Rituals.Value, 0, "Ritual", WispType.Rituals),
-                     (Wisps.Shrines.Where(s => GoodShrines.Contains(s.RenderName)).ToList(), Settings.BlueWisp.Value, 0,
-                         string.Empty, WispType.Shrine),
-                     (Wisps.Shrines.Where(s => BadShrines.Contains(s.RenderName)).ToList(), Color.Red, 0,
-                         string.Empty, WispType.Shrine),
-                     (Wisps.Shrines.Where(s => !GoodShrines.Contains(s.RenderName) && !BadShrines.Contains(s.RenderName)).ToList(),
-                         Color.Gray, 0,
+                     (Wisps.Shrines, Settings.BlueWisp.Value, 0,
                          string.Empty, WispType.Shrine),
                      (Wisps.Breaches, Settings.Breach.Value, 0, "Breach", WispType.Breach),
                      (Wisps.Custom, Settings.Dealer.Value, 0, "Spectre", WispType.Custom),
@@ -296,6 +290,12 @@ public class WhereTheWispsAt : BaseSettingsPlugin<WhereTheWispsAtSettings>
             for (var i = 0; i < entityList.Count; i++)
             {
                 var entityCur = entityList[i];
+
+                var text2 = entityCur.GetHudComponent<string>();
+                if (text2 != null)
+                {
+                    text = text2;
+                }
 
                 if (entityCur.IsTransitioned)
                 {
